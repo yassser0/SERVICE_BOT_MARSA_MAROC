@@ -150,6 +150,11 @@ async def process_chat_message(bot_id_str: str, message_text: str):
     if bot["url"] == "mock_api":
         return f"Ceci est une réponse simulée par le bot {bot['name']}. Vous avez dit : '{message_text}'"
 
+    # Commandes spéciales (ex: /clear pour vider l'historique directement depuis le chat)
+    if message_text.strip().lower() in ["/clear", "/reset"]:
+        await messages_collection.delete_many({"bot_id": bot_id_str})
+        return "✅ L'historique de la conversation a été effacé avec succès. Nous pouvons commencer une nouvelle session !"
+
     # PERSISTENT MEMORY: Fetch context
     history = []
     async for msg in messages_collection.find({"bot_id": bot_id_str}).sort("timestamp", -1).limit(15):

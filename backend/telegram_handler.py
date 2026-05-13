@@ -6,8 +6,8 @@ import html
 import base64
 from bson import ObjectId
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from database import bot_collection, bot_helper
+from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, CommandHandler, filters, ContextTypes
+from database import bot_collection, bot_helper, messages_collection
 
 # Configuration du logging
 logging.basicConfig(
@@ -459,6 +459,25 @@ class TelegramManager:
                     # En cas de Markdown invalide généré par le LLM
                     await update.message.reply_text(result_msg)
 
+            # --- Handler COMMAND (/clear, /start) ---
+            async def command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                if not update.message or not update.message.text:
+                    return
+                command = update.message.text.split()[0].lower()
+                chat_id = update.effective_chat.id
+                
+                if command in ["/clear", "/reset"]:
+                    # Effacer l'historique en base de données pour ce bot
+                    await messages_collection.delete_many({"bot_id": bot_id})
+                    
+                    if chat_id in _chat_state:
+                        del _chat_state[chat_id]
+                        
+                    await update.message.reply_text("✅ L'historique de la conversation a été effacé avec succès. Nouvelle session démarrée !")
+                elif command == "/start":
+                    await update.message.reply_text("👋 Bonjour ! Je suis prêt à vous aider. Tapez /clear à tout moment pour réinitialiser notre conversation.")
+
+            app.add_handler(CommandHandler(["clear", "reset", "start"], command_handler))
             app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), msg_handler))
             app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
             app.add_handler(MessageHandler(filters.Document.ALL, file_handler))
