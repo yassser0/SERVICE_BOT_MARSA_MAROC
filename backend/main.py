@@ -1,6 +1,14 @@
-from fastapi import FastAPI, HTTPException, Body
-from datetime import datetime
+from fastapi import FastAPI, HTTPException, Body, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from datetime import datetime, timedelta
 import time
+import os
+import secrets
+import bcrypt
+from jose import JWTError, jwt
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -10,7 +18,12 @@ from database import bot_collection, bot_helper, messages_collection, message_he
 from telegram_handler import TelegramManager
 import telegram_handler
 
-app = FastAPI(title="Bot Builder API", version="1.1.0")
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+app = FastAPI(title="Bot Builder API", version="1.2.0")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Allow requests from the React Frontend
 app.add_middleware(
@@ -25,9 +38,9 @@ app.add_middleware(
 async def startup_db_client():
     try:
         await client.admin.command('ping')
-        print("✅ MongoDB est connecté !")
+        print("[OK] MongoDB est connecte !")
     except Exception as e:
-        print("❌ ERREUR : Impossible de se connecter à MongoDB. Vérifiez Docker.")
+        print("[ERREUR] Impossible de se connecter a MongoDB. Verifiez Docker.")
 
     # Initialisation de Telegram
     telegram_handler.telegram_manager = TelegramManager(process_chat_message)
@@ -74,7 +87,87 @@ MOCK_USERS = [
     {"id": "5", "name": "Fatima", "email": "fatima@marsamaroc.ma", "role": "Management", "status": "Active"},
 ]
 
-@app.get("/bots")
+# =============================================================================
+# SECURE ADMIN AUTH  (bcrypt + JWT + rate-limiting)
+# =============================================================================
+
+# --- JWT config (override via env in production) ---
+JWT_SECRET    = os.getenv("JWT_SECRET", secrets.token_hex(32))  # random each restart if not set
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "8"))
+
+# --- Admin credentials ---
+# ADMIN_PASSWORD_HASH: bcrypt hash of the password.
+# Generate a new one with:  python -c "import bcrypt; print(bcrypt.hashpw(b'YOUR_PASSWORD', bcrypt.gensalt(12)).decode())"
+# Default password: Admin@2024!
+ADMIN_EMAIL         = os.getenv("ADMIN_EMAIL", "admin@marsamaroc.ma")
+ADMIN_PASSWORD_HASH = os.getenv(
+    "ADMIN_PASSWORD_HASH",
+    "$2b$12$KbVk3ponRLilZqVfbT6R4e.0eBbNMk4LUUBQ.Ilt5BcXMSZvgLwYC"
+)
+
+def _verify_password(plain: str, hashed: str) -> bool:
+    """Constant-time bcrypt verification."""
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
+
+def _create_jwt(email: str) -> str:
+    payload = {
+        "sub": email,
+        "role": "admin",
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+# Bearer token extractor
+_bearer = HTTPBearer(auto_error=False)
+
+def get_current_admin(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)
+):
+    """Dependency — validates JWT on every protected route."""
+    if credentials is None:
+        raise HTTPException(status_code=401, detail="Token manquant. Veuillez vous connecter.")
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        if payload.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Accès refusé.")
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token invalide ou expiré. Reconnectez-vous.")
+
+class AdminLoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/admin/login", tags=["Admin Auth"])
+@limiter.limit("5/minute")  # max 5 login attempts per minute per IP
+async def admin_login(request: Request, req: AdminLoginRequest):
+    """Authentification sécurisée : bcrypt + JWT signé."""
+    # Always run bcrypt even on wrong email (constant-time, prevents email enumeration)
+    hash_to_check = ADMIN_PASSWORD_HASH if req.email.strip().lower() == ADMIN_EMAIL.lower() \
+                    else "$2b$12$invalidhashXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+    if not _verify_password(req.password, hash_to_check) or \
+       req.email.strip().lower() != ADMIN_EMAIL.lower():
+        raise HTTPException(status_code=401, detail="Email ou mot de passe incorrect.")
+
+    token = _create_jwt(ADMIN_EMAIL)
+    return {
+        "token": token,
+        "expires_in_hours": JWT_EXPIRE_HOURS,
+        "user": {
+            "email": ADMIN_EMAIL,
+            "name": "Administrateur",
+            "role": "admin",
+        }
+    }
+
+# =============================================================================
+
+@app.get("/bots", dependencies=[Depends(get_current_admin)])
 async def get_bots():
     bots = []
     async for bot in bot_collection.find():

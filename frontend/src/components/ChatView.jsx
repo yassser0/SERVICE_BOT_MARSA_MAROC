@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bot, X, Trash2, Send, Loader2, ArrowLeft, Clock, RotateCcw } from 'lucide-react';
-import axios from 'axios';
+import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
@@ -16,7 +16,7 @@ import {
   AlertDialogCancel,
 } from './ui/AlertDialog';
 
-const API_BASE_URL = 'http://127.0.0.1:8001';
+
 
 function formatTime(dateStr) {
   if (!dateStr) return '';
@@ -49,7 +49,7 @@ export default function ChatView({ bot, onBack }) {
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const response = await axios.get(`${API_BASE_URL}/bots/${bot.id}/messages`);
+        const response = await api.get(`/bots/${bot.id}/messages`);
         if (response.data.length > 0) {
           setMessages(response.data);
         } else {
@@ -83,7 +83,7 @@ export default function ChatView({ bot, onBack }) {
 
   const clearChat = async () => {
     try {
-      await axios.delete(`${API_BASE_URL}/bots/${bot.id}/messages`);
+      await api.delete(`/bots/${bot.id}/messages`);
       setMessages([
         {
           role: 'bot',
@@ -110,7 +110,7 @@ export default function ChatView({ bot, onBack }) {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API_BASE_URL}/chat`, {
+      const response = await api.post('/chat', {
         bot_id: bot.id,
         message: sentText,
       });
