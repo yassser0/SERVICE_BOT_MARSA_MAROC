@@ -515,6 +515,44 @@ async def create_test_user(user: UserTest):
         new_user["id"] = str(random.randint(100, 999))
     return {"message": "Utilisateur créé avec succès (simulation)", "user": new_user}
 
+class AlertRequest(BaseModel):
+    bot_id: str
+    chat_id: str
+    sensor_id: str
+    anomaly_type: str
+    message: str
+
+_alert_cooldowns = {}
+COOLDOWN_SECONDS = 300  # 5 minutes silence for the same anomaly type from the same sensor
+
+@app.post("/api/send-alert")
+async def send_alert(alert: AlertRequest):
+    """Reçoit une alerte d'un système externe (ex: port-iot-service) et l'envoie sur Telegram avec un Anti-Spam."""
+    now = time.time()
+    # Unique key per chat + sensor + anomaly type
+    anomaly_key = f"{alert.chat_id}_{alert.sensor_id}_{alert.anomaly_type}"
+    last_sent = _alert_cooldowns.get(anomaly_key, 0)
+
+    if now - last_sent < COOLDOWN_SECONDS:
+        return {"status": "ignored", "reason": "cooldown_active", "cooldown_remaining": COOLDOWN_SECONDS - (now - last_sent)}
+
+    _alert_cooldowns[anomaly_key] = now
+
+    if not telegram_handler.telegram_manager:
+        raise HTTPException(status_code=500, detail="Telegram manager not initialized")
+
+    bot_app = telegram_handler.telegram_manager.apps.get(alert.bot_id)
+    if not bot_app:
+        raise HTTPException(status_code=404, detail="Bot not running or not found")
+
+    try:
+        await bot_app.bot.send_message(chat_id=alert.chat_id, text=alert.message, parse_mode="Markdown")
+        return {"status": "sent"}
+    except Exception as e:
+        # If sending fails, reset the cooldown so we can try again
+        _alert_cooldowns.pop(anomaly_key, None)
+        raise HTTPException(status_code=500, detail=str(e))
+
 import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
