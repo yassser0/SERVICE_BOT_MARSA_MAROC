@@ -3,7 +3,7 @@ services:
     image: mongo:latest
     container_name: bot_builder_mongo
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
 
@@ -16,6 +16,7 @@ services:
       - mongodb
     environment:
       - MONGO_URI=mongodb://mongodb:27017
+      - JWT_SECRET=marsa-maroc-super-secret-key-2024-change-in-prod
 
 volumes:
   mongo_data:
