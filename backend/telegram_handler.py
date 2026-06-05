@@ -6,6 +6,7 @@ import html
 import base64
 from bson import ObjectId
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import Conflict as TelegramConflict
 from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, CommandHandler, filters, ContextTypes
 from database import bot_collection, bot_helper, messages_collection
 
@@ -485,8 +486,30 @@ class TelegramManager:
 
             await app.initialize()
             await app.start()
-            await asyncio.sleep(1)
-            task = asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
+
+            # Laisser le temps à une éventuelle instance précédente de libérer le polling
+            await asyncio.sleep(3)
+
+            async def _start_polling_with_retry():
+                """Démarre le polling avec retry automatique sur les conflits 409."""
+                max_retries = 5
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        await app.updater.start_polling(
+                            drop_pending_updates=True,
+                            allowed_updates=Update.ALL_TYPES,
+                        )
+                        return  # Succès
+                    except TelegramConflict:
+                        wait = attempt * 5  # 5s, 10s, 15s, 20s, 25s
+                        logger.warning(
+                            f"⚠️  Bot {bot_id} — conflit 409 (autre instance active). "
+                            f"Nouvelle tentative dans {wait}s... ({attempt}/{max_retries})"
+                        )
+                        await asyncio.sleep(wait)
+                logger.error(f"❌ Bot {bot_id} — impossible de démarrer le polling après {max_retries} tentatives.")
+
+            task = asyncio.create_task(_start_polling_with_retry())
 
             self.apps[bot_id] = app
             self._running_tasks[bot_id] = task
