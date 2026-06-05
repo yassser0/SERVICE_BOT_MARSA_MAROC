@@ -233,6 +233,7 @@ async def _poll_etl_status(client: httpx.AsyncClient) -> str:
                             f"📈 *Score d'efficacité* : {adv.get('efficiency_score', 'N/A')}%",
                             f"🔄 *Rehandles évités* : {adv.get('rehandle_risk_count', 'N/A')}",
                         ]
+                    lines.append("\n🖥️ *Visualisation disponible :* http://localhost:5174/")
                 else:
                     # Full detailed report for Hybrid mode
                     lines = [
@@ -254,6 +255,7 @@ async def _poll_etl_status(client: httpx.AsyncClient) -> str:
                             f"\n*📈 Score d'efficacité* : {adv.get('efficiency_score', 'N/A')}%",
                             f"*🔄 Rehandles évités* : {adv.get('rehandle_risk_count', 'N/A')}",
                         ]
+                    lines.append("\n🖥️ *Visualisation disponible :* http://localhost:5174/")
                 return "\n".join(lines)
 
             elif status == "error":
